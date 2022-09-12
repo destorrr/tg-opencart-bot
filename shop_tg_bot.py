@@ -30,18 +30,19 @@ OP_USER = os.getenv("OPENCART_DB_USER")
 OP_PASSWORD = os.getenv("OPENCART_DB_PASSWORD")
 OP_HOST = os.getenv("OPENCART_DB_HOST")
 OP_DATABASE = os.getenv("OPENCART_DB_NAME")
-API_USERNAME = os.getenv('USER_NAME')
-API_KEY = os.getenv('KEY')
+API_USERNAME = os.getenv('OPENCART_API_USER_NAME')
+API_KEY = os.getenv('OPENCART_API_KEY')
 WEBSITE = os.getenv('WEBSITE_HOST')
 
 
 def get_access_to_opencart(s):
-    # Получить токен для текущей сессии.
+    # Получает токен для текущей сессии.
     api_token = get_actual_api_token(s, API_USERNAME, API_KEY,
                                      user_db=OP_USER,
                                      psw=OP_PASSWORD,
                                      host=OP_HOST,
-                                     db=OP_DATABASE)
+                                     db=OP_DATABASE,
+                                     website=WEBSITE)
     # Тестовый запрос корзины, для сброса старого токена.
     get_cart_products(s, api_token, WEBSITE)
     # # Если токен сбросился по таймауту, то получить новый для текущей сессии.
@@ -49,35 +50,41 @@ def get_access_to_opencart(s):
                                      user_db=OP_USER,
                                      psw=OP_PASSWORD,
                                      host=OP_HOST,
-                                     db=OP_DATABASE)
+                                     db=OP_DATABASE,
+                                     website=WEBSITE)
     return api_token
 
 
 async def start(
         api_token, update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
-    """Send a message when the command /start is issued."""
+    """Отправляет сообщение, когда введена команда /start."""
     op_products = OpenCartProducts(user=OP_USER,
                                    password=OP_PASSWORD,
                                    host=OP_HOST,
                                    database=OP_DATABASE,
                                    website=WEBSITE)
-    products = op_products.get_my_products()
+    # Если category_id=None, то получим список всех товаров.
+    # Иначе список товаров определенной категории.
+    category_pizza = 59
+    products = op_products.get_my_products(category_id=category_pizza)
 
     keyboard = []
+
     for product in products:
         button = []
-        if product['id'] < 31:
-            button.append(InlineKeyboardButton(product["name"],
-                                               callback_data=product["id"]))
+        # if product['id'] < 31:
+        button.append(InlineKeyboardButton(product["name"],
+                                           callback_data=product["id"]))
         keyboard.append(button)
     cart = [InlineKeyboardButton('Корзина', callback_data=f'cart')]
+
     keyboard.append(cart)
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     if update.message:
         user = update.effective_user
         await update.message.reply_html(
-            rf"Hi {user.mention_html()}! Доступные услуги для заказа:",
+            rf"Привет {user.mention_html()}! Выбирай то, что тебе нравится:",
             reply_markup=reply_markup,
         )
     elif update.callback_query:
@@ -85,7 +92,7 @@ async def start(
         message_id = update.callback_query.message.message_id
         await context.bot.delete_message(chat_id=chat_id,
                                          message_id=message_id)
-        await context.bot.send_message(text='Доступные услуги для заказа:',
+        await context.bot.send_message(text='Выбирай то, что тебе нравится:',
                                        chat_id=chat_id,
                                        reply_markup=reply_markup)
 
@@ -108,22 +115,17 @@ async def handle_menu(
                                        database=OP_DATABASE,
                                        website=WEBSITE)
         product = op_products.get_my_product(id_my_product=int(query.data))
-        text = (f'{product["name"]}\n\n'
-                f'{product["price"]} руб. за ящик.\n'
-                f'Остаток ящиков - {product["quantity"]}.\n\n'
-                f'Свежий продукт. Прямые поставки из Киргизии.')
+        text = (f'{product["name"]}\n'
+                f'Стоимость: {product["price"]}\n\n'
+                f'{product["description"]}.\n')
 
         keyboard = [
             [
-                InlineKeyboardButton('1 ящик',
+                InlineKeyboardButton('Положить в корзину',
                                      callback_data=f'{query.data},1'),
-                InlineKeyboardButton('2 ящика',
-                                     callback_data=f'{query.data},2'),
-                InlineKeyboardButton('3 ящика',
-                                     callback_data=f'{query.data},3'),
             ],
             [
-                InlineKeyboardButton('Корзина', callback_data=f'cart')
+                InlineKeyboardButton('Корзина', callback_data=f'cart'),
             ],
             [
                 InlineKeyboardButton('Назад', callback_data=f'back'),
@@ -134,7 +136,6 @@ async def handle_menu(
 
         await context.bot.delete_message(chat_id=chat_id,
                                          message_id=message_id)
-
         await context.bot.send_photo(chat_id=chat_id,
                                      photo=product['image'],
                                      caption=text,
@@ -147,7 +148,6 @@ async def get_cart(
     query = update.callback_query
     chat_id = update.callback_query.message.chat_id
     message_id = update.callback_query.message.message_id
-    # api_token = get_access_to_opencart(s)
     cart_content = get_cart_products(s, api_token, WEBSITE)
     print(f'Содержимое корзины - {cart_content}')
     await query.answer()
@@ -164,8 +164,8 @@ async def get_cart(
             keyboard.append(button)
             button = []
             text = (f"{product['name']}\n"
-                    f"{product['price']} руб. за ящик.\n"
-                    f"Ящиков в корзине - {product['quantity']} "
+                    f"Цена: {product['price']}\n"
+                    f"Количество в корзине - {product['quantity']} "
                     f"на {product['total']}\n\n")
             total_text += text
         total_text += f'Итого: {cart_content["totals"][-1]["text"]}'
@@ -197,12 +197,13 @@ async def handle_description(
     query = update.callback_query
     chat_id = update.callback_query.message.chat_id
 
-    await query.answer()
 
     print(f'query.data - {query.data}')
     if query.data == 'cart':
+        await query.answer()
         return await get_cart(api_token, update, context)
     elif query.data == 'back':
+        await query.answer()
         return await start(api_token, update, context)
     else:
         user_reply = query.data.split(',')
@@ -213,10 +214,9 @@ async def handle_description(
         cart_add(s, api_token, product_id, WEBSITE, product_quantity)
 
         if product_quantity:
-            await context.bot.send_message(
-                text=f'Товар добавлен в количестве {product_quantity}',
-                chat_id=chat_id
-            )
+            text=(f'Добавлено в корзину, \n'
+                  f'в количестве {product_quantity} порция.')
+            await query.answer(text=text, show_alert=True)
 
         return 'HANDLE_DESCRIPTION'
 

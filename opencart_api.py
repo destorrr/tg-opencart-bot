@@ -10,10 +10,18 @@ def get_api_token(session, username, key, website):
     )
     # api_token_content = res.text.split('</b>')[-1]
     # print(f'Получен новый токен - {json.loads(api_token_content)}\n')
-    print(json.loads(res.text))
+    if res.text != '[]':
+        print(json.loads(res.text))
+        return True
+    else:
+        print(f'Error get_api_token OpenCart.')
+        print(f'User API OpenCart - {username}.')
+        print(f'Key API OpenCart - {key}.')
+        return False
 
 
-def get_actual_api_token(session, username, key, user_db, psw, host, db):
+def get_actual_api_token(
+        session, username, key, user_db, psw, host, db, website):
     """Получить существующий или сгенерить новый api_token."""
     cnx = mysql.connector.connect(user=user_db,
                                   password=psw,
@@ -33,7 +41,8 @@ def get_actual_api_token(session, username, key, user_db, psw, host, db):
             flag = False
         except IndexError:
             # Получаем api_token для сессии, если его нет в БД.
-            get_api_token(session, username, key)
+            if not get_api_token(session, username, key, website):
+                flag = False
 
     cursor_api.close()
     print(f'api-token - "{api_token}"\n')
