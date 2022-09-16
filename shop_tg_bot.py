@@ -55,8 +55,37 @@ def get_access_to_opencart(s):
     return api_token
 
 
+def get_keyboard_menu(products: list, count_lines_on_page, page_num=1):
+    """Клавиатура для полного списка товаров."""
+    b = page_num * count_lines_on_page
+    a = b - count_lines_on_page
+    next_page = page_num + 1
+    prev_page = page_num - 1
+
+    keyboard = []
+
+    for product in products[a:b]:
+        button = []
+        button.append(InlineKeyboardButton(product["name"],
+                                           callback_data=product["id"]))
+        keyboard.append(button)
+
+    other_buttons = [
+        InlineKeyboardButton('Пред', callback_data=f'page{prev_page}'),
+        InlineKeyboardButton('След', callback_data=f'page{next_page}'),
+    ]
+    keyboard.append(other_buttons)
+
+    cart = [InlineKeyboardButton('Корзина', callback_data=f'cart')]
+
+    keyboard.append(cart)
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    return reply_markup
+
+
 async def start(
-        api_token, update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
+        api_token, update: Update,
+        context: ContextTypes.DEFAULT_TYPE) -> str:
     """Отправляет сообщение, когда введена команда /start."""
     op_products = OpenCartProducts(user=OP_USER,
                                    password=OP_PASSWORD,
@@ -67,47 +96,73 @@ async def start(
     # Иначе список товаров определенной категории.
     category_pizza = 59
     products = op_products.get_my_products(category_id=category_pizza)
+    user = update.effective_user
 
-    keyboard = []
-
-    for product in products:
-        button = []
-        # if product['id'] < 31:
-        button.append(InlineKeyboardButton(product["name"],
-                                           callback_data=product["id"]))
-        keyboard.append(button)
-    cart = [InlineKeyboardButton('Корзина', callback_data=f'cart')]
-
-    keyboard.append(cart)
-    reply_markup = InlineKeyboardMarkup(keyboard)
+    total_count_products = len(products)
+    count_lines_on_page = 8
+    page_count = int(total_count_products / count_lines_on_page)
+    if total_count_products % count_lines_on_page > 0:
+        page_count = int(page_count + 1)
 
     if update.message:
-        user = update.effective_user
+        reply_markup = get_keyboard_menu(products, count_lines_on_page)
+
         await update.message.reply_html(
-            rf"Привет {user.mention_html()}! Выбирай то, что тебе нравится:",
+            rf'Привет {user.mention_html()}! Выбирай то, что тебе нравится:',
             reply_markup=reply_markup,
         )
     elif update.callback_query:
         chat_id = update.callback_query.message.chat_id
         message_id = update.callback_query.message.message_id
-        await context.bot.delete_message(chat_id=chat_id,
-                                         message_id=message_id)
-        await context.bot.send_message(text='Выбирай то, что тебе нравится:',
-                                       chat_id=chat_id,
-                                       reply_markup=reply_markup)
 
+        reply_markup = get_keyboard_menu(products, count_lines_on_page)
+
+        if (update.callback_query.data == 'menu'
+                or update.callback_query.data == 'back'):
+            await context.bot.delete_message(chat_id=chat_id,
+                                             message_id=message_id)
+            text = 'Выбирай то, что тебе нравится:'
+            await context.bot.send_message(text=text,
+                                           chat_id=chat_id,
+                                           reply_markup=reply_markup)
+        else:
+            query = update.callback_query.data.lstrip('page')
+            print(f'QUERY: {query}')
+            page_num = int(query)
+            if page_num > page_count:
+                page_num = 1
+            elif page_num < 1:
+                page_num = page_count
+
+            reply_markup = get_keyboard_menu(products,
+                                             count_lines_on_page,
+                                             page_num=page_num)
+
+            await context.bot.delete_message(chat_id=chat_id,
+                                             message_id=message_id)
+            await context.bot.send_message(
+                text=f'Выбирай то, что тебе нравится:',
+                chat_id=chat_id,
+                reply_markup=reply_markup,
+            )
+            # return 'START'
     return 'HANDLE_MENU'
 
 
 async def handle_menu(
-        api_token, update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
+        api_token, update: Update,
+        context: ContextTypes.DEFAULT_TYPE) -> str:
     query = update.callback_query
     chat_id = update.callback_query.message.chat_id
     message_id = update.callback_query.message.message_id
     await query.answer()
 
+    print(f'QUERY_DATA in HANDLE_MENU: {query.data}')
+
     if query.data == 'cart':
         return await get_cart(api_token, update, context)
+    elif query.data.startswith('page'):
+        return await start(api_token, update, context)
     else:
         op_products = OpenCartProducts(user=OP_USER,
                                        password=OP_PASSWORD,
@@ -195,8 +250,6 @@ async def get_cart(
 async def handle_description(
         api_token, update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
     query = update.callback_query
-    chat_id = update.callback_query.message.chat_id
-
 
     print(f'query.data - {query.data}')
     if query.data == 'cart':
@@ -204,7 +257,7 @@ async def handle_description(
         return await get_cart(api_token, update, context)
     elif query.data == 'back':
         await query.answer()
-        return await start(api_token, update, context)
+        return await start(update, context)
     else:
         user_reply = query.data.split(',')
         product_id = user_reply[0]
@@ -214,8 +267,8 @@ async def handle_description(
         cart_add(s, api_token, product_id, WEBSITE, product_quantity)
 
         if product_quantity:
-            text=(f'Добавлено в корзину, \n'
-                  f'в количестве {product_quantity} порция.')
+            text = (f'Добавлено в корзину, \n'
+                    f'в количестве {product_quantity} порция.')
             await query.answer(text=text, show_alert=True)
 
         return 'HANDLE_DESCRIPTION'
@@ -227,11 +280,11 @@ async def handle_cart(
     await query.answer()
 
     if query.data == 'menu':
-        return await start(api_token, update, context)
+        return await start(update, context)
     elif query.data == 'order':
         return await get_contacts(api_token, update, context)
     else:
-        cart_remove(s, api_token, cart_id=query.data)
+        cart_remove(s, api_token, cart_id=query.data, website=WEBSITE)
         cart_content = get_cart_products(s, api_token, WEBSITE)
         print(f'Содержимое корзины - {cart_content}')
         await get_cart(api_token, update, context)
@@ -283,7 +336,8 @@ async def get_contacts(
 
 
 async def handle_users_reply(
-        update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        update: Update,
+        context: ContextTypes.DEFAULT_TYPE) -> None:
     db = get_database_connection()
     api_token = get_access_to_opencart(s)
     if update.message:
@@ -296,6 +350,8 @@ async def handle_users_reply(
         return
     if user_reply == '/start':
         user_state = 'START'
+    # Если category_id=None, то получим список всех товаров.
+    # Иначе список товаров определенной категории.
         print(f'Current state first - {user_state}')
     else:
         user_state = db.get(chat_id)
@@ -346,12 +402,15 @@ def main() -> None:
 
     application = Application.builder().token(token).build()
 
-    application.add_handler(CommandHandler("start", handle_users_reply))
-    application.add_handler(CallbackQueryHandler(handle_users_reply))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND,
-                                           handle_users_reply))
-    application.add_handler(MessageHandler(filters.TEXT | filters.COMMAND,
-                                           unknown))
+    application.add_handler(
+        CommandHandler("start", handle_users_reply))
+    application.add_handler(
+        CallbackQueryHandler(handle_users_reply))
+    application.add_handler(
+        MessageHandler(filters.TEXT & ~filters.COMMAND,
+                       handle_users_reply))
+    application.add_handler(
+        MessageHandler(filters.TEXT | filters.COMMAND, unknown))
 
     application.run_polling()
 
