@@ -8,16 +8,17 @@ def get_api_token(session, username, key, website):
         f'http://{website}/index.php?route=api/login',
         data={'username': username, 'key': key}
     )
-    # api_token_content = res.text.split('</b>')[-1]
-    # print(f'Получен новый токен - {json.loads(api_token_content)}\n')
-    if res.text != '[]':
-        print(json.loads(res.text))
-        return True
-    else:
-        print(f'Error get_api_token OpenCart.')
+    result_dict = json.loads(res.text)
+    if res.text == '[]':
+        print(f'Error OpenCart API: api_token is empty.')
         print(f'User API OpenCart - {username}.')
         print(f'Key API OpenCart - {key}.')
         return False
+    elif 'error' in result_dict:
+        print(f'Error OpenCart API: {result_dict["error"]}')
+        return False
+    else:
+        return result_dict['api_token']
 
 
 def get_actual_api_token(
@@ -61,6 +62,7 @@ def set_session_for_api_user(session, api_token, username, key, website):
     )
     user_session = res.text.split('</b>')[-1]
     print(f'Установление сеанса для {username} - {json.loads(user_session)}\n')
+    return json.loads(user_session)
 
 
 def cart_add(session, api_token, product_id, website, quantity='1'):
@@ -104,7 +106,6 @@ def get_cart_products(session, api_token, website):
         data={}
     )
     cart_content = res.text.split('</b>')[-1]
-    # print(json.loads(cart_content), '\n')
     return json.loads(cart_content)
 
 
@@ -155,7 +156,7 @@ def get_shipping_methods(session, api_token, website):
         params={'api_token': api_token},
     )
     shipping_methods = res.text.split('</b>')[-1]
-    print(json.loads(shipping_methods), '\n')
+    return json.loads(shipping_methods)
 
 
 def set_shipping_method(session, api_token, website):

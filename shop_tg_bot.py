@@ -35,24 +35,28 @@ API_KEY = os.getenv('OPENCART_API_KEY')
 WEBSITE = os.getenv('WEBSITE_HOST')
 
 
-def get_access_to_opencart(s):
-    # Получает токен для текущей сессии.
-    api_token = get_actual_api_token(s, API_USERNAME, API_KEY,
-                                     user_db=OP_USER,
-                                     psw=OP_PASSWORD,
-                                     host=OP_HOST,
-                                     db=OP_DATABASE,
-                                     website=WEBSITE)
-    # Тестовый запрос корзины, для сброса старого токена.
-    get_cart_products(s, api_token, WEBSITE)
-    # # Если токен сбросился по таймауту, то получить новый для текущей сессии.
-    api_token = get_actual_api_token(s, API_USERNAME, API_KEY,
-                                     user_db=OP_USER,
-                                     psw=OP_PASSWORD,
-                                     host=OP_HOST,
-                                     db=OP_DATABASE,
-                                     website=WEBSITE)
-    return api_token
+def get_access_to_opencart(db) -> str:
+    """Получает токен для текущей сессии из БД Redis."""
+    # Первое обращение в БД за токеном.
+    api_token = db.get('api_token')
+    if api_token is None:
+        api_token = get_api_token(s, API_USERNAME, API_KEY, WEBSITE)
+        db.set('api_token', api_token)
+        print('1-й этап')
+        return api_token
+    # Если токен есть в базе, то делаем любой тестовый запрос с использованием
+    # токена. Если 'error' - генерируем новый и записываем в БД.
+    # check_api = get_shipping_methods(s, api_token, WEBSITE)
+    check_api = get_cart_products(s, api_token, WEBSITE)
+    # print(check_api)
+    if 'error' in check_api:
+        api_token = get_api_token(s, API_USERNAME, API_KEY, WEBSITE)
+        db.set('api_token', api_token)
+        print('2-й этап')
+        return api_token
+    else:
+        print('3-й этап')
+        return api_token
 
 
 def get_keyboard_menu(products: list, count_lines_on_page, page_num=1):
@@ -98,6 +102,8 @@ async def start(
     products = op_products.get_my_products(category_id=category_pizza)
     user = update.effective_user
 
+    print(f'API-token start: {api_token}')
+
     total_count_products = len(products)
     count_lines_on_page = 8
     page_count = int(total_count_products / count_lines_on_page)
@@ -118,7 +124,8 @@ async def start(
         reply_markup = get_keyboard_menu(products, count_lines_on_page)
 
         if (update.callback_query.data == 'menu'
-                or update.callback_query.data == 'back'):
+                or update.callback_query.data == 'back'
+                or update.callback_query.data.split(',')[-1] == '_true'):
             await context.bot.delete_message(chat_id=chat_id,
                                              message_id=message_id)
             text = 'Выбирай то, что тебе нравится:'
@@ -158,6 +165,7 @@ async def handle_menu(
     await query.answer()
 
     print(f'QUERY_DATA in HANDLE_MENU: {query.data}')
+    print(f'API-token handle_menu: {api_token}')
 
     if query.data == 'cart':
         return await get_cart(api_token, update, context)
@@ -171,7 +179,7 @@ async def handle_menu(
                                        website=WEBSITE)
         product = op_products.get_my_product(id_my_product=int(query.data))
         text = (f'{product["name"]}\n'
-                f'Стоимость: {product["price"]}\n\n'
+                f'Стоимость: {product["price"]} руб.\n\n'
                 f'{product["description"]}.\n')
 
         keyboard = [
@@ -191,6 +199,11 @@ async def handle_menu(
 
         await context.bot.delete_message(chat_id=chat_id,
                                          message_id=message_id)
+        print(f'product: {product}\n'
+              f'chat_id: {chat_id}\n'
+              f'photo: {product["image"]}\n'
+              f'text: {text}\n'
+              f'reply markup: {reply_markup}')
         await context.bot.send_photo(chat_id=chat_id,
                                      photo=product['image'],
                                      caption=text,
@@ -203,7 +216,9 @@ async def get_cart(
     query = update.callback_query
     chat_id = update.callback_query.message.chat_id
     message_id = update.callback_query.message.message_id
+    print(f'API-token get_cart before: {api_token}')
     cart_content = get_cart_products(s, api_token, WEBSITE)
+    print(f'API-token get_cart after: {api_token}')
     print(f'Содержимое корзины - {cart_content}')
     await query.answer()
 
@@ -250,21 +265,26 @@ async def get_cart(
 async def handle_description(
         api_token, update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
     query = update.callback_query
+    print(f'API-token handle_description before: {api_token}')
 
     print(f'query.data - {query.data}')
     if query.data == 'cart':
+        print(f'API-token handle_description before (cart): {api_token}')
         await query.answer()
         return await get_cart(api_token, update, context)
     elif query.data == 'back':
+        print(f'API-token handle_description before (back): {api_token}')
         await query.answer()
-        return await start(update, context)
+        return await start(api_token, update, context)
     else:
         user_reply = query.data.split(',')
         product_id = user_reply[0]
         product_quantity = int(user_reply[1])
         print(f'Product_id - {product_id}')
         print(f'Product_quantity - {product_quantity}')
+        print(f'API-token handle_description before (cart_add): {api_token}')
         cart_add(s, api_token, product_id, WEBSITE, product_quantity)
+        print(f'API-token handle_description after (cart_add): {api_token}')
 
         if product_quantity:
             text = (f'Добавлено в корзину, \n'
@@ -280,7 +300,7 @@ async def handle_cart(
     await query.answer()
 
     if query.data == 'menu':
-        return await start(update, context)
+        return await start(api_token, update, context)
     elif query.data == 'order':
         return await get_contacts(api_token, update, context)
     else:
@@ -339,7 +359,8 @@ async def handle_users_reply(
         update: Update,
         context: ContextTypes.DEFAULT_TYPE) -> None:
     db = get_database_connection()
-    api_token = get_access_to_opencart(s)
+    api_token = get_access_to_opencart(db)
+    print(f'API-token handle_users_reply: {api_token}')
     if update.message:
         user_reply = update.message.text
         chat_id = update.message.chat_id
