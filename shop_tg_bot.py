@@ -7,7 +7,10 @@ import requests
 from dotenv import load_dotenv
 from opencart_api import *
 from opencart_products import OpenCartProducts
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import (InlineKeyboardButton,
+                      InlineKeyboardMarkup,
+                      Update,
+                      constants)
 from telegram.ext import (Application,
                           CommandHandler,
                           ContextTypes,
@@ -112,7 +115,6 @@ async def start(
 
     if update.message:
         reply_markup = get_keyboard_menu(products, count_lines_on_page)
-
         await update.message.reply_html(
             rf'Привет {user.mention_html()}! Выбирай то, что тебе нравится:',
             reply_markup=reply_markup,
@@ -178,9 +180,9 @@ async def handle_menu(
                                        database=OP_DATABASE,
                                        website=WEBSITE)
         product = op_products.get_my_product(id_my_product=int(query.data))
-        text = (f'{product["name"]}\n'
-                f'Стоимость: {product["price"]} руб.\n\n'
-                f'{product["description"]}.\n')
+        text = (f'<u><b>{product["name"]}</b></u>\n'
+                f'Стоимость: <b>{product["price"]} руб.</b>\n\n'
+                f'<i>{product["description"]}</i>\n')
 
         keyboard = [
             [
@@ -207,7 +209,8 @@ async def handle_menu(
         await context.bot.send_photo(chat_id=chat_id,
                                      photo=product['image'],
                                      caption=text,
-                                     reply_markup=reply_markup)
+                                     reply_markup=reply_markup,
+                                     parse_mode=constants.ParseMode.HTML)
         return 'HANDLE_DESCRIPTION'
 
 
@@ -226,19 +229,19 @@ async def get_cart(
 
     if cart_content['products']:
         button = []
-        total_text = f'Содержимое корзины:\n\n'
+        total_text = f'<b>Содержимое корзины:</b>\n\n'
         for product in cart_content['products']:
             button.append(InlineKeyboardButton(
                 f'Убрать из корзины {product["name"]}',
                 callback_data=product["cart_id"]))
             keyboard.append(button)
             button = []
-            text = (f"{product['name']}\n"
-                    f"Цена: {product['price']}\n"
-                    f"Количество в корзине - {product['quantity']} "
-                    f"на {product['total']}\n\n")
+            text = (f"<u><b>{product['name']}</b></u>\n"
+                    f"Цена: <i>{product['price']}</i>\n"
+                    f"Количество в корзине - <i>{product['quantity']} "
+                    f"на {product['total']}</i>\n\n")
             total_text += text
-        total_text += f'Итого: {cart_content["totals"][-1]["text"]}'
+        total_text += f'<b>Итого:</b> {cart_content["totals"][-1]["text"]}'
         order = [InlineKeyboardButton('Сделать заказ', callback_data=f'order')]
         keyboard.append(order)
         menu = [InlineKeyboardButton('В меню', callback_data=f'menu')]
@@ -257,7 +260,8 @@ async def get_cart(
     await context.bot.delete_message(chat_id=chat_id, message_id=message_id)
     await context.bot.send_message(text=total_text,
                                    chat_id=chat_id,
-                                   reply_markup=reply_markup)
+                                   reply_markup=reply_markup,
+                                   parse_mode=constants.ParseMode.HTML)
 
     return state
 
