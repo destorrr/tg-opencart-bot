@@ -1,6 +1,7 @@
 import os
 
 import logging
+import phonenumbers
 import redis
 import requests
 
@@ -345,17 +346,44 @@ async def get_contacts(
         user_reply = update.message.text
         chat_id = update.message.chat_id
 
-        keyboard = [
-            [InlineKeyboardButton('Верно',
-                                  callback_data=f'{user_reply},_true')],
-            [InlineKeyboardButton('Не верно', callback_data=f'_false')],
-        ]
+        phone_number = user_reply
+        text = (f'<b>Некорректно введен номер телефона.</b>\n\n'
+                f'Попробуйте еще раз\n'
+                f'или введите /start для возврата в начало.')
+        try:
+            x = phonenumbers.parse(phone_number, 'RU')
+        except phonenumbers.phonenumberutil.NumberParseException:
+            await update.message.reply_text(
+                text=text,
+                parse_mode=constants.ParseMode.HTML)
+            return 'WAITING_CONTACTS'
 
-        reply_markup = InlineKeyboardMarkup(keyboard)
+        possible = phonenumbers.is_possible_number(x)
+        valid = phonenumbers.is_valid_number(x)
 
-        text = f'Ваш номер - {user_reply}. Верно?'
-        await update.message.reply_text(text=text,
-                                        reply_markup=reply_markup)
+        if not possible or not valid:
+            await update.message.reply_text(
+                text=text,
+                parse_mode=constants.ParseMode.HTML)
+
+        else:
+            number = phonenumbers.format_number(
+                x, phonenumbers.PhoneNumberFormat.INTERNATIONAL)
+            text = f'Ваш номер: <b>{number}</b>. Верно?'
+
+            keyboard = [
+                [InlineKeyboardButton('Верно',
+                                      callback_data=f'{user_reply},_true')],
+                [InlineKeyboardButton('Не верно', callback_data=f'_false')],
+            ]
+
+            reply_markup = InlineKeyboardMarkup(keyboard)
+
+            await update.message.reply_text(
+                text=text,
+                reply_markup=reply_markup,
+                parse_mode=constants.ParseMode.HTML)
+
         return 'WAITING_CONTACTS'
 
 
