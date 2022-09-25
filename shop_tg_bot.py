@@ -181,9 +181,23 @@ async def handle_menu(
                                        database=OP_DATABASE,
                                        website=WEBSITE)
         product = op_products.get_my_product(id_my_product=int(query.data))
-        text = (f'<u><b>{product["name"]}</b></u>\n'
-                f'Стоимость: <b>{product["price"]} руб.</b>\n\n'
-                f'<i>{product["description"]}</i>\n')
+
+        cart_content = get_cart_products(s, api_token, WEBSITE)
+        cart_products = cart_content['products']
+        if cart_products:
+            for cart_product in cart_products:
+                if cart_product['name'] == product["name"]:
+                    quantity = cart_product['quantity']
+                    break
+                else:
+                    quantity = '0'
+        else:
+            quantity = '0'
+
+        text = (f'{product["name"]}\n'
+                f'Стоимость: {product["price"]} руб.\n\n'
+                f'{product["description"]}.\n\n'
+                f"Наличие этого товара в корзине: {quantity} шт.")
 
         keyboard = [
             [
@@ -202,11 +216,6 @@ async def handle_menu(
 
         await context.bot.delete_message(chat_id=chat_id,
                                          message_id=message_id)
-        print(f'product: {product}\n'
-              f'chat_id: {chat_id}\n'
-              f'photo: {product["image"]}\n'
-              f'text: {text}\n'
-              f'reply markup: {reply_markup}')
         await context.bot.send_photo(chat_id=chat_id,
                                      photo=product['image'],
                                      caption=text,
