@@ -11,7 +11,9 @@ from opencart_products import OpenCartProducts
 from telegram import (InlineKeyboardButton,
                       InlineKeyboardMarkup,
                       Update,
-                      constants)
+                      constants,
+                      KeyboardButton,
+                      ReplyKeyboardMarkup)
 from telegram.ext import (Application,
                           CommandHandler,
                           ContextTypes,
@@ -22,7 +24,7 @@ from telegram.ext import (Application,
 load_dotenv()
 
 logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    format="%(asctime)s - %(name)-25s - %(levelname)-8s - %(message)s",
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
@@ -342,7 +344,10 @@ async def get_contacts(
                     f'Как будет товар, мы вас оповестим.')
             await context.bot.send_message(text=text,
                                            chat_id=chat_id)
-            return await start(api_token, update, context)
+            # return await start(api_token, update, context)
+            return await handle_location(api_token, update, context)
+            # return 'LOCATION'
+            
         elif user_reply[-1] == '_false':
             await context.bot.send_message(text=f'Введите еще раз номер',
                                            chat_id=chat_id)
@@ -396,6 +401,33 @@ async def get_contacts(
         return 'WAITING_CONTACTS'
 
 
+async def handle_location(
+        api_token, update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
+    if update.message:
+        if (update.message.location.latitude
+                and update.message.location.longitude):
+            lat = update.message.location.latitude
+            lon = update.message.location.longitude
+            current_pos = (lat, lon)
+            print(current_pos)
+            await update.message.reply_text(text=current_pos)
+        else:
+            await update.message.reply_text('Нету координат!!!')
+    else:
+        chat_id = update.callback_query.message.chat_id
+        location_keyboard = KeyboardButton(text="Передать геолокацию",
+                                           request_location=True)
+        custom_keyboard = [[location_keyboard]]
+        reply_markup = ReplyKeyboardMarkup(custom_keyboard,
+                                           resize_keyboard=True)
+        text = ('Для продолжения необходимо или передать вашу геолокацию '
+                'или ввести адрес.')
+        await context.bot.send_message(text=text,
+                                       reply_markup=reply_markup,
+                                       chat_id=chat_id)
+    return 'LOCATION'
+
+
 async def handle_users_reply(
         update: Update,
         context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -426,6 +458,7 @@ async def handle_users_reply(
         'GET_CART': get_cart,
         'HANDLE_CART': handle_cart,
         'WAITING_CONTACTS': get_contacts,
+        'LOCATION': handle_location,
     }
     state_handler = states_functions[user_state]
 
@@ -471,6 +504,8 @@ def main() -> None:
     application.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND,
                        handle_users_reply))
+    application.add_handler(
+        MessageHandler(filters.LOCATION, handle_users_reply))
     application.add_handler(
         MessageHandler(filters.TEXT | filters.COMMAND, unknown))
 
