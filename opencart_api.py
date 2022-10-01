@@ -1,5 +1,10 @@
+import logging
+
 import mysql.connector
 import json
+
+
+logger = logging.getLogger('tg_bot.oc_api')
 
 
 def get_api_token(session, username, key, website):
@@ -10,12 +15,13 @@ def get_api_token(session, username, key, website):
     )
     result_dict = json.loads(res.text)
     if res.text == '[]':
-        print(f'Error OpenCart API: api_token is empty.')
-        print(f'User API OpenCart - {username}.')
-        print(f'Key API OpenCart - {key}.')
+        text = (f'Error OpenCart API: api_token is empty.\n'
+                f'User API OpenCart - {username}.\n'
+                f'Key API OpenCart - {key}.')
+        logger.error(text)
         return False
     elif 'error' in result_dict:
-        print(f'Error OpenCart API: {result_dict["error"]}')
+        logger.error(f'Error OpenCart API: {result_dict["error"]}')
         return False
     else:
         return result_dict['api_token']
@@ -46,7 +52,7 @@ def get_actual_api_token(
                 flag = False
 
     cursor_api.close()
-    print(f'api-token - "{api_token}"\n')
+    logger.debug(f'get_actual_api_token: api-token - "{api_token}"\n')
     return api_token
 
 
@@ -61,7 +67,7 @@ def set_session_for_api_user(session, api_token, username, key, website):
         }
     )
     user_session = res.text.split('</b>')[-1]
-    print(f'Установление сеанса для {username} - {json.loads(user_session)}\n')
+    logger.debug(f'Cеанса для {username} : {json.loads(user_session)}')
     return json.loads(user_session)
 
 
@@ -76,26 +82,30 @@ def cart_add(session, api_token, product_id, website, quantity='1'):
         }
     )
     cart_add = res.text.split('</b>')[-1]
-    print(f'Добавлено в корзину - {json.loads(cart_add)}\n')
+    logger.debug(f'cart_add: Добавлено в корзину - {json.loads(cart_add)}')
 
 
 def cart_edit(session, api_token, cart_id, website, quantity):
     """Изменяем кол-во товара в корзине. (key = cart_id)"""
-    session.post(
+    res = session.post(
         f'http://{website}/index.php?route=api/cart/edit',
         params={'api_token': api_token},
         data={'key': cart_id,
               'quantity': quantity}
     )
+    cart_edit = res.text.split('</b>')[-1]
+    logger.debug(f'cart_edit: {json.loads(cart_edit)}')
 
 
 def cart_remove(session, api_token, cart_id, website):
     """Удаляем товар из корзины. (key = cart_id)"""
-    session.post(
+    res = session.post(
         f'http://{website}/index.php?route=api/cart/remove',
         params={'api_token': api_token},
         data={'key': cart_id}
     )
+    cart_remove = res.text.split('</b>')[-1]
+    logger.debug(f'cart_remove: {json.loads(cart_remove)}')
 
 
 def get_cart_products(session, api_token, website):
@@ -106,6 +116,7 @@ def get_cart_products(session, api_token, website):
         data={}
     )
     cart_content = res.text.split('</b>')[-1]
+    logger.debug(f'cart_content: {json.loads(cart_content)}')
     return json.loads(cart_content)
 
 
@@ -128,7 +139,7 @@ def set_customer(session,
         }
     )
     customer = res.text.split('</b>')[-1]
-    print(json.loads(customer), '\n')
+    logger.debug(f'customer: {json.loads(customer)}')
 
 
 def set_shipping_address(session, api_token, website):
@@ -146,7 +157,7 @@ def set_shipping_address(session, api_token, website):
         }
     )
     shipping_address = res.text.split('</b>')[-1]
-    print(json.loads(shipping_address), '\n')
+    logger.debug(f'shipping_address: {json.loads(shipping_address)}')
 
 
 def get_shipping_methods(session, api_token, website):
@@ -156,6 +167,7 @@ def get_shipping_methods(session, api_token, website):
         params={'api_token': api_token},
     )
     shipping_methods = res.text.split('</b>')[-1]
+    logger.debug(f'shipping_methods: {json.loads(shipping_methods)}')
     return json.loads(shipping_methods)
 
 
@@ -168,8 +180,8 @@ def set_shipping_method(session, api_token, website):
             'shipping_method': 'pickup.pickup'
         }
     )
-    shipping_content = res.text.split('</b>')[-1]
-    print(json.loads(shipping_content), '\n')
+    shipping_method = res.text.split('</b>')[-1]
+    logger.debug(f'shipping_method: {json.loads(shipping_method)}')
 
 
 def set_payment_address(session, api_token, website):
@@ -187,7 +199,7 @@ def set_payment_address(session, api_token, website):
         }
     )
     payment_address = res.text.split('</b>')[-1]
-    print(json.loads(payment_address), '\n')
+    logger.debug(f'payment_address: {json.loads(payment_address)}')
 
 
 def get_payment_methods(session, api_token, website):
@@ -197,7 +209,7 @@ def get_payment_methods(session, api_token, website):
         params={'api_token': api_token},
     )
     payment_methods = res.text.split('</b>')[-1]
-    print(json.loads(payment_methods), '\n')
+    logger.debug(f'payment_methods: {json.loads(payment_methods)}')
 
 
 def set_payment_method(session, api_token, website):
@@ -210,7 +222,7 @@ def set_payment_method(session, api_token, website):
         }
     )
     payment_method = res.text.split('</b>')[-1]
-    print(json.loads(payment_method), '\n')
+    logger.debug(f'payment_method: {json.loads(payment_method)}')
 
 
 def order_add(session, api_token, website):
@@ -220,7 +232,7 @@ def order_add(session, api_token, website):
         params={'api_token': api_token},
     )
     order_content = json.loads(res.text.split('</b>')[-1])
-    print(order_content, '\n')
+    logger.debug(f'order_content: {order_content}')
     return order_content['order_id']
 
 
@@ -235,7 +247,7 @@ def order_edit(session, api_token, order_id, website):
         data={}
     )
     order_edit = res.text.split('</b>')[-1]
-    print(json.loads(order_edit), '\n')
+    logger.debug(f'order_edit: {json.loads(order_edit)}')
 
 
 def order_delete(session, api_token, order_id, website):
@@ -247,7 +259,7 @@ def order_delete(session, api_token, order_id, website):
         data={}
     )
     order_delete = res.text.split('</b>')[-1]
-    print(json.loads(order_delete), '\n')
+    logger.debug(f'order_delete: {json.loads(order_delete)}')
 
 
 def get_order_info(session, api_token, order_id, website):
@@ -259,7 +271,7 @@ def get_order_info(session, api_token, order_id, website):
         data={}
     )
     order_info = res.text.split('</b>')[-1]
-    print(json.loads(order_info), '\n')
+    logger.debug(f'order_info: {json.loads(order_info)}')
     return order_info
 
 
@@ -272,7 +284,7 @@ def get_order_history(session, api_token, order_id, website):
         data={}
     )
     order_history = res.text.split('</b>')[-1]
-    print(json.loads(order_history), '\n')
+    logger.debug(f'order_history: {json.loads(order_history)}')
 
 
 def create_order(s, api_token, lastname, telephone, website):
