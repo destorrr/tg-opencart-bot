@@ -24,10 +24,11 @@ from telegram.ext import (Application,
 load_dotenv()
 
 logging.basicConfig(
-    format="%(asctime)s - %(name)-25s - %(levelname)-8s - %(message)s",
+    format="%(asctime)s - %(name)-15s - %(levelname)-8s - %(message)s",
     level=logging.INFO
 )
-logger = logging.getLogger(__name__)
+logger = logging.getLogger('tg_bot')
+logger.setLevel(logging.INFO)
 
 s = requests.Session()
 
@@ -48,20 +49,20 @@ def get_access_to_opencart(db) -> str:
     if api_token is None:
         api_token = get_api_token(s, API_USERNAME, API_KEY, WEBSITE)
         db.set('api_token', api_token)
-        print('1-й этап')
+        logger.info('Генерация токена, так как его нет в БД.')
         return api_token
     # Если токен есть в базе, то делаем любой тестовый запрос с использованием
     # токена. Если 'error' - генерируем новый и записываем в БД.
     # check_api = get_shipping_methods(s, api_token, WEBSITE)
     check_api = get_cart_products(s, api_token, WEBSITE)
-    # print(check_api)
+    # logger.debug(check_api)
     if 'error' in check_api:
         api_token = get_api_token(s, API_USERNAME, API_KEY, WEBSITE)
         db.set('api_token', api_token)
-        print('2-й этап')
+        logger.info('Генерация токена, так как старый токен не валиден.')
         return api_token
     else:
-        print('3-й этап')
+        logger.info('Используется текущий токен.')
         return api_token
 
 
@@ -108,8 +109,6 @@ async def start(
     products = op_products.get_my_products(category_id=category_pizza)
     user = update.effective_user
 
-    print(f'API-token start: {api_token}')
-
     total_count_products = len(products)
     count_lines_on_page = 8
     page_count = int(total_count_products / count_lines_on_page)
@@ -139,7 +138,7 @@ async def start(
                                            reply_markup=reply_markup)
         else:
             query = update.callback_query.data.lstrip('page')
-            print(f'QUERY: {query}')
+            logger.debug(f'QUERY: {query}')
             page_num = int(query)
             if page_num > page_count:
                 page_num = 1
@@ -169,8 +168,7 @@ async def handle_menu(
     message_id = update.callback_query.message.message_id
     await query.answer()
 
-    print(f'QUERY_DATA in HANDLE_MENU: {query.data}')
-    print(f'API-token handle_menu: {api_token}')
+    logger.debug(f'QUERY_DATA in HANDLE_MENU: {query.data}')
 
     if query.data == 'cart':
         return await get_cart(api_token, update, context)
@@ -231,10 +229,7 @@ async def get_cart(
     query = update.callback_query
     chat_id = update.callback_query.message.chat_id
     message_id = update.callback_query.message.message_id
-    print(f'API-token get_cart before: {api_token}')
     cart_content = get_cart_products(s, api_token, WEBSITE)
-    print(f'API-token get_cart after: {api_token}')
-    print(f'Содержимое корзины - {cart_content}')
     await query.answer()
 
     keyboard = []
@@ -281,26 +276,21 @@ async def get_cart(
 async def handle_description(
         api_token, update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
     query = update.callback_query
-    print(f'API-token handle_description before: {api_token}')
 
-    print(f'query.data - {query.data}')
+    logger.debug(f'query.data - {query.data}')
     if query.data == 'cart':
-        print(f'API-token handle_description before (cart): {api_token}')
         await query.answer()
         return await get_cart(api_token, update, context)
     elif query.data == 'back':
-        print(f'API-token handle_description before (back): {api_token}')
         await query.answer()
         return await start(api_token, update, context)
     else:
         user_reply = query.data.split(',')
         product_id = user_reply[0]
         product_quantity = int(user_reply[1])
-        print(f'Product_id - {product_id}')
-        print(f'Product_quantity - {product_quantity}')
-        print(f'API-token handle_description before (cart_add): {api_token}')
+        logger.debug(f'Product_id - {product_id}')
+        logger.debug(f'Product_quantity - {product_quantity}')
         cart_add(s, api_token, product_id, WEBSITE, product_quantity)
-        print(f'API-token handle_description after (cart_add): {api_token}')
 
         if product_quantity:
             text = (f'Добавлено в корзину, \n'
@@ -321,8 +311,6 @@ async def handle_cart(
         return await get_contacts(api_token, update, context)
     else:
         cart_remove(s, api_token, cart_id=query.data, website=WEBSITE)
-        cart_content = get_cart_products(s, api_token, WEBSITE)
-        print(f'Содержимое корзины - {cart_content}')
         await get_cart(api_token, update, context)
         return 'GET_CART'
 
@@ -338,7 +326,7 @@ async def get_contacts(
                                     telephone=user_reply[0],
                                     lastname=chat_id,
                                     website=WEBSITE)
-            print(f'Номер телефона - {user_reply[0]}')
+            logger.debug(f'Номер телефона - {user_reply[0]}')
             text = (f'Заказ сохранен.\n'
                     f'Номер заказа - {order_id}.\n'
                     f'Как будет товар, мы вас оповестим.')
@@ -361,6 +349,7 @@ async def get_contacts(
         chat_id = update.message.chat_id
 
         phone_number = user_reply
+        logger.debug(f'phone_number: {phone_number}')
         text = (f'<b>Некорректно введен номер телефона.</b>\n\n'
                 f'Попробуйте еще раз\n'
                 f'или введите /start для возврата в начало.')
@@ -433,7 +422,6 @@ async def handle_users_reply(
         context: ContextTypes.DEFAULT_TYPE) -> None:
     db = get_database_connection()
     api_token = get_access_to_opencart(db)
-    print(f'API-token handle_users_reply: {api_token}')
     if update.message:
         user_reply = update.message.text
         chat_id = update.message.chat_id
@@ -446,10 +434,10 @@ async def handle_users_reply(
         user_state = 'START'
     # Если category_id=None, то получим список всех товаров.
     # Иначе список товаров определенной категории.
-        print(f'Current state first - {user_state}')
+        logger.debug(f'Current state first - {user_state}')
     else:
         user_state = db.get(chat_id)
-        print(f'Current state from DB - {user_state}')
+        logger.debug(f'Current state from DB - {user_state}')
 
     states_functions = {
         'START': start,
@@ -464,10 +452,10 @@ async def handle_users_reply(
 
     try:
         next_state = await state_handler(api_token, update, context)
-        print(f'Next state - {next_state}')
+        logger.debug(f'Next state - {next_state}')
         db.set(chat_id, next_state)
     except Exception as err:
-        print(f'Ошибка - {err}')
+        logger.debug(f'Ошибка - {err}')
 
 
 def get_database_connection():
@@ -492,7 +480,7 @@ async def unknown(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 def main() -> None:
-
+    logger.debug('Start application.')
     token = os.getenv("TOKEN_TG")
 
     application = Application.builder().token(token).build()
