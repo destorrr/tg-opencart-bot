@@ -24,11 +24,11 @@ from telegram.ext import (Application,
 load_dotenv()
 
 logging.basicConfig(
-    format="%(asctime)s - %(name)-15s - %(levelname)-8s - %(message)s",
+    format="%(asctime)s - %(name)-15s - %(levelname)-8s - (%(lineno)d)%(message)s",
     level=logging.INFO
 )
 logger = logging.getLogger('tg_bot')
-logger.setLevel(logging.INFO)
+logger.setLevel(logging.DEBUG)
 
 s = requests.Session()
 
@@ -40,6 +40,28 @@ OP_DATABASE = os.getenv("OPENCART_DB_NAME")
 API_USERNAME = os.getenv('OPENCART_API_USER_NAME')
 API_KEY = os.getenv('OPENCART_API_KEY')
 WEBSITE = os.getenv('WEBSITE_HOST')
+YA_GEO_API_KEY = os.getenv('YA_GEO_API_KEY')
+
+
+def fetch_coordinates(apikey, address):
+    base_url = "https://geocode-maps.yandex.ru/1.x"
+    response = requests.get(base_url, params={
+        "geocode": address,
+        "apikey": apikey,
+        "format": "json",
+    })
+    response.raise_for_status()
+    found_places = response.json()['response']['GeoObjectCollection']['featureMember']
+    with open('data/geo.json', 'w', encoding='utf-8') as f:
+        json.dump(found_places, f, indent=4, ensure_ascii=False)
+
+    if not found_places:
+        return None
+
+    most_relevant = found_places[0]
+    lon, lat = most_relevant['GeoObject']['Point']['pos'].split(" ")
+
+    return lat, lon
 
 
 def get_access_to_opencart(db) -> str:
@@ -393,16 +415,26 @@ async def get_contacts(
 async def handle_location(
         api_token, update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
     if update.message:
-        if (update.message.location.latitude
-                and update.message.location.longitude):
+        logger.debug(f'update.message: {update.message}')
+        try:
+            coords = fetch_coordinates(YA_GEO_API_KEY, update.message.text)
+            logger.debug(f'Координаты от яндекса - {coords}')
+        except requests.exceptions.HTTPError as err:
+            logger.error(f'Error: {err}')
             lat = update.message.location.latitude
             lon = update.message.location.longitude
             current_pos = (lat, lon)
-            print(current_pos)
+            logger.debug(f'Геолокация от пользователя - {current_pos}')
             await update.message.reply_text(text=current_pos)
         else:
-            await update.message.reply_text('Нету координат!!!')
+            if coords:
+                await update.message.reply_text(text=coords)
+            else:
+                logger.debug(f'Нераспознанный текст - {update.message.text}')
+                await update.message.reply_text(
+                    'Введите корректный адрес или отправьте геолокацию.')
     else:
+        logger.debug(f'Не выполнено условие.')
         chat_id = update.callback_query.message.chat_id
         location_keyboard = KeyboardButton(text="Передать геолокацию",
                                            request_location=True)
@@ -480,7 +512,7 @@ async def unknown(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 def main() -> None:
-    logger.debug('Start application.')
+    logger.info('Start application.')
     token = os.getenv("TOKEN_TG")
 
     application = Application.builder().token(token).build()
