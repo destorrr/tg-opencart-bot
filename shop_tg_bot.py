@@ -6,6 +6,7 @@ import redis
 import requests
 
 from dotenv import load_dotenv
+from geopy import distance
 from opencart_api import *
 from opencart_products import OpenCartProducts
 from telegram import (InlineKeyboardButton,
@@ -416,6 +417,8 @@ async def handle_location(
         api_token, update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
     if update.message:
         logger.debug(f'update.message: {update.message}')
+        stores_locations = get_all_stores_locations(OP_USER, OP_PASSWORD,
+                                                    OP_HOST, OP_DATABASE)
         try:
             coords = fetch_coordinates(YA_GEO_API_KEY, update.message.text)
             logger.debug(f'Координаты от яндекса - {coords}')
@@ -425,10 +428,16 @@ async def handle_location(
             lon = update.message.location.longitude
             current_pos = (lat, lon)
             logger.debug(f'Геолокация от пользователя - {current_pos}')
-            await update.message.reply_text(text=current_pos)
+            distances = get_distance_to_stores(current_pos, stores_locations)
+            min_distance = min(distances, key=get_distance)
+            await update.message.reply_text(text=get_shipping(min_distance))
         else:
             if coords:
-                await update.message.reply_text(text=coords)
+                distances = get_distance_to_stores(coords,
+                                                   stores_locations)
+                min_distance = min(distances, key=get_distance)
+                await update.message.reply_text(
+                    text=get_shipping(min_distance))
             else:
                 logger.debug(f'Нераспознанный текст - {update.message.text}')
                 await update.message.reply_text(
@@ -447,6 +456,59 @@ async def handle_location(
                                        reply_markup=reply_markup,
                                        chat_id=chat_id)
     return 'LOCATION'
+
+
+def get_all_stores_locations(OP_USER, OP_PASSWORD, OP_HOST, OP_DATABASE):
+    cnx = mysql.connector.connect(user=OP_USER,
+                                  password=OP_PASSWORD,
+                                  host=OP_HOST,
+                                  database=OP_DATABASE)
+
+    cursor = cnx.cursor()
+    query = ('SELECT name, geocode from oc_location')
+    cursor.execute(query)
+
+    locations = []
+    for name, geocode in cursor:
+        location_store = {}
+        location_store['name'] = name
+        location_store['geocode'] = geocode
+        locations.append(location_store)
+
+    cnx.close()
+    logger.debug(f'stores_locations: {locations}')
+    return locations
+
+
+def get_distance_to_stores(user_geocode, stores_locations: list):
+    distances_list = []
+    for store_location in stores_locations:
+        distance_to_store = {}
+        store_geocode = store_location['geocode']
+        dist = distance.distance(store_geocode, user_geocode).km
+        distance_to_store['name'] = store_location['name']
+        distance_to_store['distance'] = dist
+        distances_list.append(distance_to_store)
+    logger.debug(f'distances: {distances_list}')
+    return distances_list
+
+
+def get_distance(distances):
+    return distances['distance']
+
+
+def get_shipping(min_distance):
+    logger.debug(f'min_distance: {min_distance["distance"]}')
+    if min_distance['distance'] <= 0.5:
+        shipping = 'Самовывоз или бесплатная доставка.'
+    elif min_distance['distance'] > 0.5 and min_distance['distance'] <= 5:
+        shipping = 'Доставка 100 руб.'
+    elif min_distance['distance'] > 5 and min_distance['distance'] <= 20:
+        shipping = 'Доставка 300 руб.'
+    else:
+        shipping = 'Самовывоз, так как далеко.'
+    logger.debug(f'shipping_text: {shipping}')
+    return shipping
 
 
 async def handle_users_reply(
