@@ -1,6 +1,7 @@
 __pycache__/
 temp/
 venv/
+data/
 .env
 info.txt
 Dockerfile

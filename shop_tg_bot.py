@@ -77,8 +77,10 @@ def get_access_to_opencart(db) -> str:
     # Если токен есть в базе, то делаем любой тестовый запрос с использованием
     # токена. Если 'error' - генерируем новый и записываем в БД.
     # check_api = get_shipping_methods(s, api_token, WEBSITE)
-    check_api = get_cart_products(s, api_token, WEBSITE)
-    # logger.debug(check_api)
+    try:
+        check_api = get_cart_products(s, api_token, WEBSITE)
+    except requests.exceptions.HTTPError as err:
+        logger.error(f'HTTPError from OpenCart: {err}')
     if 'error' in check_api:
         api_token = get_api_token(s, API_USERNAME, API_KEY, WEBSITE)
         db.set('api_token', api_token)
@@ -126,6 +128,7 @@ async def start(
                                    host=OP_HOST,
                                    database=OP_DATABASE,
                                    website=WEBSITE)
+    logger.debug(f'op_products: {op_products}')
     # Если category_id=None, то получим список всех товаров.
     # Иначе список товаров определенной категории.
     category_pizza = 59
@@ -345,19 +348,21 @@ async def get_contacts(
         chat_id = update.callback_query.message.chat_id
         user_reply = query.data.split(',')
         if user_reply[-1] == '_true':
-            order_id = create_order(s, api_token,
-                                    telephone=user_reply[0],
-                                    lastname=chat_id,
-                                    website=WEBSITE)
+            # order_id = create_order(s, api_token,
+            #                         telephone=user_reply[0],
+            #                         lastname=chat_id,
+            #                         website=WEBSITE)
             logger.debug(f'Номер телефона - {user_reply[0]}')
-            text = (f'Заказ сохранен.\n'
-                    f'Номер заказа - {order_id}.\n'
-                    f'Как будет товар, мы вас оповестим.')
+            # text = (f'Заказ сохранен.\n'
+            #         f'Номер заказа - {order_id}.\n'
+            #         f'Как будет товар, мы вас оповестим.')
+            text = (f'Для расчета стоимости доставки отправьте свой адрес '
+                    f'или свою геопозицию.')
             await context.bot.send_message(text=text,
                                            chat_id=chat_id)
             # return await start(api_token, update, context)
-            return await handle_location(api_token, update, context)
-            # return 'LOCATION'
+            # return await handle_location(api_token, update, context)
+            return 'LOCATION'
             
         elif user_reply[-1] == '_false':
             await context.bot.send_message(text=f'Введите еще раз номер',
@@ -416,6 +421,7 @@ async def get_contacts(
 async def handle_location(
         api_token, update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
     if update.message:
+        chat_id = update.message.chat_id
         logger.debug(f'update.message: {update.message}')
         stores_locations = get_all_stores_locations(OP_USER, OP_PASSWORD,
                                                     OP_HOST, OP_DATABASE)
@@ -431,6 +437,20 @@ async def handle_location(
             distances = get_distance_to_stores(current_pos, stores_locations)
             min_distance = min(distances, key=get_distance)
             await update.message.reply_text(text=get_shipping(min_distance))
+
+            text = f'Делаем доставку или самовывоз?'
+            keyboard = [
+                [InlineKeyboardButton('Доставка', callback_data=f'delivery')],
+                [InlineKeyboardButton('Самовывоз', callback_data=f'pickup')],
+            ]
+
+            reply_markup = InlineKeyboardMarkup(keyboard)
+
+            await context.bot.send_message(text=text,
+                                           chat_id=chat_id,
+                                           reply_markup=reply_markup,
+                                           parse_mode=constants.ParseMode.HTML)
+
         else:
             if coords:
                 distances = get_distance_to_stores(coords,
@@ -438,6 +458,8 @@ async def handle_location(
                 min_distance = min(distances, key=get_distance)
                 await update.message.reply_text(
                     text=get_shipping(min_distance))
+                text = f'Делаем доставку или самовывоз?'
+                await update.message.reply_text(text=text)
             else:
                 logger.debug(f'Нераспознанный текст - {update.message.text}')
                 await update.message.reply_text(
@@ -506,7 +528,7 @@ def get_shipping(min_distance):
     elif min_distance['distance'] > 5 and min_distance['distance'] <= 20:
         shipping = 'Доставка 300 руб.'
     else:
-        shipping = 'Самовывоз, так как далеко.'
+        shipping = 'Сюда нет доставки.'
     logger.debug(f'shipping_text: {shipping}')
     return shipping
 
@@ -515,7 +537,10 @@ async def handle_users_reply(
         update: Update,
         context: ContextTypes.DEFAULT_TYPE) -> None:
     db = get_database_connection()
-    api_token = get_access_to_opencart(db)
+    try:
+        api_token = get_access_to_opencart(db)
+    except Exception as err:
+        logger.error(f'Ошибка получения токена OpenCart: {err}')
     if update.message:
         user_reply = update.message.text
         chat_id = update.message.chat_id
@@ -549,7 +574,7 @@ async def handle_users_reply(
         logger.debug(f'Next state - {next_state}')
         db.set(chat_id, next_state)
     except Exception as err:
-        logger.debug(f'Ошибка - {err}')
+        logger.error(f'Ошибка - {err}')
 
 
 def get_database_connection():

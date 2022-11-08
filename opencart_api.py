@@ -13,6 +13,7 @@ def get_api_token(session, username, key, website):
         f'http://{website}/index.php?route=api/login',
         data={'username': username, 'key': key}
     )
+    res.raise_for_status()
     result_dict = json.loads(res.text)
     if res.text == '[]':
         text = (f'Error OpenCart API: api_token is empty.\n'
@@ -66,6 +67,7 @@ def set_session_for_api_user(session, api_token, username, key, website):
             'key': key
         }
     )
+    res.raise_for_status()
     user_session = res.text.split('</b>')[-1]
     logger.debug(f'Cеанса для {username} : {json.loads(user_session)}')
     return json.loads(user_session)
@@ -81,6 +83,7 @@ def cart_add(session, api_token, product_id, website, quantity='1'):
             'quantity': quantity,
         }
     )
+    res.raise_for_status()
     cart_add = res.text.split('</b>')[-1]
     logger.debug(f'cart_add: Добавлено в корзину - {json.loads(cart_add)}')
 
@@ -93,6 +96,7 @@ def cart_edit(session, api_token, cart_id, website, quantity):
         data={'key': cart_id,
               'quantity': quantity}
     )
+    res.raise_for_status()
     cart_edit = res.text.split('</b>')[-1]
     logger.debug(f'cart_edit: {json.loads(cart_edit)}')
 
@@ -104,6 +108,7 @@ def cart_remove(session, api_token, cart_id, website):
         params={'api_token': api_token},
         data={'key': cart_id}
     )
+    res.raise_for_status()
     cart_remove = res.text.split('</b>')[-1]
     logger.debug(f'cart_remove: {json.loads(cart_remove)}')
 
@@ -115,6 +120,8 @@ def get_cart_products(session, api_token, website):
         params={'api_token': api_token},
         data={}
     )
+    res.raise_for_status()
+
     cart_content = res.text.split('</b>')[-1]
     logger.debug(f'cart_content: {json.loads(cart_content)}')
     return json.loads(cart_content)
@@ -138,6 +145,7 @@ def set_customer(session,
             'telephone': telephone,
         }
     )
+    res.raise_for_status()
     customer = res.text.split('</b>')[-1]
     logger.debug(f'customer: {json.loads(customer)}')
 
@@ -156,6 +164,7 @@ def set_shipping_address(session, api_token, website):
             'zone_id': 'KGD'
         }
     )
+    res.raise_for_status()
     shipping_address = res.text.split('</b>')[-1]
     logger.debug(f'shipping_address: {json.loads(shipping_address)}')
 
@@ -166,6 +175,7 @@ def get_shipping_methods(session, api_token, website):
         f'http://{website}/index.php?route=api/shipping/methods',
         params={'api_token': api_token},
     )
+    res.raise_for_status()
     shipping_methods = res.text.split('</b>')[-1]
     logger.debug(f'shipping_methods: {json.loads(shipping_methods)}')
     return json.loads(shipping_methods)
@@ -180,6 +190,7 @@ def set_shipping_method(session, api_token, website):
             'shipping_method': 'pickup.pickup'
         }
     )
+    res.raise_for_status()
     shipping_method = res.text.split('</b>')[-1]
     logger.debug(f'shipping_method: {json.loads(shipping_method)}')
 
@@ -198,6 +209,7 @@ def set_payment_address(session, api_token, website):
             'zone_id': 'KGD'
         }
     )
+    res.raise_for_status()
     payment_address = res.text.split('</b>')[-1]
     logger.debug(f'payment_address: {json.loads(payment_address)}')
 
@@ -208,6 +220,7 @@ def get_payment_methods(session, api_token, website):
         f'http://{website}/index.php?route=api/payment/methods',
         params={'api_token': api_token},
     )
+    res.raise_for_status()
     payment_methods = res.text.split('</b>')[-1]
     logger.debug(f'payment_methods: {json.loads(payment_methods)}')
 
@@ -221,6 +234,7 @@ def set_payment_method(session, api_token, website):
             'payment_method': 'cod'
         }
     )
+    res.raise_for_status()
     payment_method = res.text.split('</b>')[-1]
     logger.debug(f'payment_method: {json.loads(payment_method)}')
 
@@ -231,6 +245,7 @@ def order_add(session, api_token, website):
         f'http://{website}/index.php?route=api/order/add',
         params={'api_token': api_token},
     )
+    res.raise_for_status()
     order_content = json.loads(res.text.split('</b>')[-1])
     logger.debug(f'order_content: {order_content}')
     return order_content['order_id']
@@ -246,6 +261,7 @@ def order_edit(session, api_token, order_id, website):
                 'quantity': 9},
         data={}
     )
+    res.raise_for_status()
     order_edit = res.text.split('</b>')[-1]
     logger.debug(f'order_edit: {json.loads(order_edit)}')
 
@@ -258,6 +274,7 @@ def order_delete(session, api_token, order_id, website):
                 'order_id': order_id},
         data={}
     )
+    res.raise_for_status()
     order_delete = res.text.split('</b>')[-1]
     logger.debug(f'order_delete: {json.loads(order_delete)}')
 
@@ -270,6 +287,7 @@ def get_order_info(session, api_token, order_id, website):
                 'order_id': order_id},
         data={}
     )
+    res.raise_for_status()
     order_info = res.text.split('</b>')[-1]
     logger.debug(f'order_info: {json.loads(order_info)}')
     return order_info
@@ -283,6 +301,7 @@ def get_order_history(session, api_token, order_id, website):
                 'order_id': order_id},
         data={}
     )
+    res.raise_for_status()
     order_history = res.text.split('</b>')[-1]
     logger.debug(f'order_history: {json.loads(order_history)}')
 
