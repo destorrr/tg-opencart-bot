@@ -155,7 +155,8 @@ async def start(
 
         if (update.callback_query.data == 'menu'
                 or update.callback_query.data == 'back'
-                or update.callback_query.data.split(',')[-1] == '_true'):
+                or update.callback_query.data.split(',')[-1] == '_true'
+                or update.callback_query.data.split(',')[0] == 'pickup'):
             await context.bot.delete_message(chat_id=chat_id,
                                              message_id=message_id)
             text = 'Выбирай то, что тебе нравится:'
@@ -346,13 +347,20 @@ async def get_contacts(
     if update.callback_query:
         query = update.callback_query
         chat_id = update.callback_query.message.chat_id
+        user = update.effective_user
         user_reply = query.data.split(',')
         if user_reply[-1] == '_true':
             # order_id = create_order(s, api_token,
             #                         telephone=user_reply[0],
             #                         lastname=chat_id,
             #                         website=WEBSITE)
-            logger.debug(f'Номер телефона - {user_reply[0]}')
+            logger.debug(f'Номер телефона: {user_reply[0]}')
+            logger.debug(f'User: {user}')
+            logger.debug(f'Username: {user["username"]}')
+            logger.debug(f'Chat_id: {chat_id}')
+            db = get_database_connection()
+            db.set(user['username'], user_reply[0])
+            logger.debug(f'Номер телефона в Redis:{db.get(user["username"])}')
             # text = (f'Заказ сохранен.\n'
             #         f'Номер заказа - {order_id}.\n'
             #         f'Как будет товар, мы вас оповестим.')
@@ -363,7 +371,7 @@ async def get_contacts(
             # return await start(api_token, update, context)
             # return await handle_location(api_token, update, context)
             return 'LOCATION'
-            
+
         elif user_reply[-1] == '_false':
             await context.bot.send_message(text=f'Введите еще раз номер',
                                            chat_id=chat_id)
@@ -436,12 +444,14 @@ async def handle_location(
             logger.debug(f'Геолокация от пользователя - {current_pos}')
             distances = get_distance_to_stores(current_pos, stores_locations)
             min_distance = min(distances, key=get_distance)
+            store_name = min_distance['name']
+             
             await update.message.reply_text(text=get_shipping(min_distance))
 
             text = f'Делаем доставку или самовывоз?'
             keyboard = [
                 [InlineKeyboardButton('Доставка', callback_data=f'delivery')],
-                [InlineKeyboardButton('Самовывоз', callback_data=f'pickup')],
+                [InlineKeyboardButton('Самовывоз', callback_data=f'pickup,{store_name}')],
             ]
 
             reply_markup = InlineKeyboardMarkup(keyboard)
@@ -450,16 +460,30 @@ async def handle_location(
                                            chat_id=chat_id,
                                            reply_markup=reply_markup,
                                            parse_mode=constants.ParseMode.HTML)
+            return 'DELIVERY_OPTIONS'
 
         else:
             if coords:
                 distances = get_distance_to_stores(coords,
                                                    stores_locations)
                 min_distance = min(distances, key=get_distance)
+                store_name = min_distance['name']
                 await update.message.reply_text(
                     text=get_shipping(min_distance))
                 text = f'Делаем доставку или самовывоз?'
-                await update.message.reply_text(text=text)
+                keyboard = [
+                [InlineKeyboardButton('Доставка', callback_data=f'delivery')],
+                [InlineKeyboardButton('Самовывоз', callback_data=f'pickup,{store_name}')],
+                ]
+
+                reply_markup = InlineKeyboardMarkup(keyboard)
+
+                await context.bot.send_message(text=text,
+                                               chat_id=chat_id,
+                                               reply_markup=reply_markup,
+                                               parse_mode=constants.ParseMode.HTML)
+                # await update.message.reply_text(text=text)
+                return 'DELIVERY_OPTIONS'
             else:
                 logger.debug(f'Нераспознанный текст - {update.message.text}')
                 await update.message.reply_text(
@@ -478,6 +502,32 @@ async def handle_location(
                                        reply_markup=reply_markup,
                                        chat_id=chat_id)
     return 'LOCATION'
+
+
+async def delivery_options(api_token,
+                           update: Update,
+                           context: ContextTypes.DEFAULT_TYPE) -> None:
+    if update.callback_query:
+        user_reply = update.callback_query.data.split(',')
+        chat_id = update.callback_query.message.chat_id
+        user = update.effective_user
+        logger.debug(f'user_reply: {user_reply}')
+        if user_reply[0] == 'pickup':
+            text = (f'Ближайшая к вам пиццерия - {user_reply[-1]}.\n')
+            await context.bot.send_message(text=text, chat_id=chat_id)
+        db = get_database_connection()
+        telephone = db.get(user['username'])
+        logger.debug(f'Телефон из Redis: {telephone}')
+        order_id = create_order(s, api_token,
+                                telephone=telephone,
+                                lastname=chat_id,
+                                website=WEBSITE)
+        text = (f'Заказ сохранен.\n'
+                f'Номер заказа - {order_id}.\n'
+                f'Спасибо за заказ, ждем вас снова!')
+
+        await context.bot.send_message(text=text, chat_id=chat_id)
+    return await start(api_token, update, context)
 
 
 def get_all_stores_locations(OP_USER, OP_PASSWORD, OP_HOST, OP_DATABASE):
@@ -517,6 +567,10 @@ def get_distance_to_stores(user_geocode, stores_locations: list):
 
 def get_distance(distances):
     return distances['distance']
+
+
+def get_store_name(distances):
+    return distances['name']
 
 
 def get_shipping(min_distance):
@@ -566,6 +620,7 @@ async def handle_users_reply(
         'HANDLE_CART': handle_cart,
         'WAITING_CONTACTS': get_contacts,
         'LOCATION': handle_location,
+        'DELIVERY_OPTIONS': delivery_options,
     }
     state_handler = states_functions[user_state]
 
