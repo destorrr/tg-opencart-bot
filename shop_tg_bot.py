@@ -156,7 +156,8 @@ async def start(
         if (update.callback_query.data == 'menu'
                 or update.callback_query.data == 'back'
                 or update.callback_query.data.split(',')[-1] == '_true'
-                or update.callback_query.data.split(',')[0] == 'pickup'):
+                or update.callback_query.data.split(',')[0] == 'pickup'
+                or update.callback_query.data.split(';')[0] == 'delivery'):
             await context.bot.delete_message(chat_id=chat_id,
                                              message_id=message_id)
             text = 'Выбирай то, что тебе нравится:'
@@ -445,13 +446,16 @@ async def handle_location(
             distances = get_distance_to_stores(current_pos, stores_locations)
             min_distance = min(distances, key=get_distance)
             store_name = min_distance['name']
-             
+            logger.debug(f'Магазин (яндекс координаты): {store_name}')
+            deliveryman_id = get_deliveryman_id(store_name,OP_USER, OP_PASSWORD,
+                                                OP_HOST, OP_DATABASE)
             await update.message.reply_text(text=get_shipping(min_distance))
 
             text = f'Делаем доставку или самовывоз?'
             keyboard = [
-                [InlineKeyboardButton('Доставка', callback_data=f'delivery')],
-                [InlineKeyboardButton('Самовывоз', callback_data=f'pickup,{store_name}')],
+                [InlineKeyboardButton('Доставка', 
+                                      callback_data=f'delivery;{deliveryman_id};{current_pos}')],
+                [InlineKeyboardButton('Самовывоз', callback_data=f'pickup;{store_name}')],
             ]
 
             reply_markup = InlineKeyboardMarkup(keyboard)
@@ -468,12 +472,17 @@ async def handle_location(
                                                    stores_locations)
                 min_distance = min(distances, key=get_distance)
                 store_name = min_distance['name']
+                logger.debug(f'Магазин (геопозиция): {store_name}')
+                deliveryman_id = get_deliveryman_id(store_name, OP_USER,
+                                                    OP_PASSWORD, OP_HOST,
+                                                    OP_DATABASE)
                 await update.message.reply_text(
                     text=get_shipping(min_distance))
                 text = f'Делаем доставку или самовывоз?'
                 keyboard = [
-                [InlineKeyboardButton('Доставка', callback_data=f'delivery')],
-                [InlineKeyboardButton('Самовывоз', callback_data=f'pickup,{store_name}')],
+                [InlineKeyboardButton('Доставка',
+                                      callback_data=f'delivery;{deliveryman_id};{coords}')],
+                [InlineKeyboardButton('Самовывоз', callback_data=f'pickup;{store_name}')],
                 ]
 
                 reply_markup = InlineKeyboardMarkup(keyboard)
@@ -504,30 +513,94 @@ async def handle_location(
     return 'LOCATION'
 
 
+def get_deliveryman_id(store_name, OP_USER, OP_PASSWORD, OP_HOST, OP_DATABASE):
+    cnx = mysql.connector.connect(user=OP_USER,
+                                  password=OP_PASSWORD,
+                                  host=OP_HOST,
+                                  database=OP_DATABASE)
+
+    cursor = cnx.cursor()
+    query = ('SELECT c.custom_field as custom_field '
+             'FROM oc_customer as c '
+             'left JOIN oc_customer_group_description as cgd '
+             'on cgd.customer_group_id = c.customer_group_id '
+             f"where cgd.name = '{store_name}'")
+    cursor.execute(query)
+    deliverymans_id_list = []
+    for custom_field in cursor:
+        dlvman_id_list = custom_field[0].lstrip('{').rstrip('}').split(':')
+        deliveryman_id = dlvman_id_list[1].strip('"')
+        logger.debug(f'deliveryman_id: {deliveryman_id}')
+        deliverymans_id_list.append(deliveryman_id)
+    cnx.close()
+    logger.debug(f'deliverymans_id_list: {deliverymans_id_list}')
+    logger.debug(f'deliverymans_id_list[0]: {deliverymans_id_list[0]}')
+    return deliverymans_id_list[0]
+
+
 async def delivery_options(api_token,
                            update: Update,
                            context: ContextTypes.DEFAULT_TYPE) -> None:
     if update.callback_query:
-        user_reply = update.callback_query.data.split(',')
+        user_reply = update.callback_query.data.split(';')
         chat_id = update.callback_query.message.chat_id
         user = update.effective_user
         logger.debug(f'user_reply: {user_reply}')
-        if user_reply[0] == 'pickup':
-            text = (f'Ближайшая к вам пиццерия - {user_reply[-1]}.\n')
-            await context.bot.send_message(text=text, chat_id=chat_id)
         db = get_database_connection()
         telephone = db.get(user['username'])
         logger.debug(f'Телефон из Redis: {telephone}')
-        order_id = create_order(s, api_token,
-                                telephone=telephone,
-                                lastname=chat_id,
-                                website=WEBSITE)
-        text = (f'Заказ сохранен.\n'
-                f'Номер заказа - {order_id}.\n'
+
+        if user_reply[0] == 'pickup':
+            text = (f'Ближайшая к вам пиццерия - {user_reply[-1]}.\n')
+            await context.bot.send_message(text=text, chat_id=chat_id)
+            order_id = create_order(s, api_token,
+                                    telephone=telephone,
+                                    lastname=chat_id,
+                                    website=WEBSITE)
+        else:
+            deliveryman_id = user_reply[1]
+            coords = user_reply[2]
+            logger.debug(f'ID доставщика: {deliveryman_id}')
+            logger.debug(f'Координаты клиента: {user_reply[2]}')
+            text = (f'Ваш заказ передан в доставку.')
+            await context.bot.send_message(text=text, chat_id=chat_id)
+            order_id = create_order(s, api_token,
+                                    telephone=telephone,
+                                    lastname=chat_id,
+                                    website=WEBSITE)
+            await delivery(order_id, deliveryman_id, coords,
+                           OP_USER, OP_PASSWORD, OP_HOST, OP_DATABASE,
+                           update, context)
+
+        text = (f'Номер заказа - {order_id}.\n'
                 f'Спасибо за заказ, ждем вас снова!')
 
         await context.bot.send_message(text=text, chat_id=chat_id)
-    return await start(api_token, update, context)
+        return await start(api_token, update, context)
+    else:
+        chat_id = update.message.chat_id
+        text = f'Вводить ничего не надо. Выберите вариант доставки.'
+        await context.bot.send_message(text=text, chat_id=chat_id)
+        return 'DELIVERY_OPTIONS'
+
+
+async def delivery(order_id, deliveryman_id, coords,
+                   OP_USER, OP_PASSWORD, OP_HOST, OP_DATABASE,
+                   update: Update, context: ContextTypes.DEFAULT_TYPE):
+    logger.info(f'Entering the delivery function')
+    coords_list = coords.lstrip('(').rstrip(')').split(', ')
+    logger.debug(f'Coords: {coords}')
+    logger.debug(f'Coords_list: {coords_list}')
+    lat = float(coords_list[0].strip("'"))
+    logger.debug(f'Latitude: {lat}')
+    lon = float(coords_list[1].strip("'"))
+    logger.debug(f'Longitude: {lon}')
+    text = get_order_content(order_id, user_db=OP_USER,
+                             psw=OP_PASSWORD, host=OP_HOST, db=OP_DATABASE)
+    await context.bot.send_message(text=text, chat_id=deliveryman_id)
+    await context.bot.send_location(chat_id=deliveryman_id,
+                                    latitude=lat, longitude=lon)
+    pass
 
 
 def get_all_stores_locations(OP_USER, OP_PASSWORD, OP_HOST, OP_DATABASE):
@@ -643,6 +716,7 @@ def get_database_connection():
                                 password=password,
                                 charset="utf-8",
                                 decode_responses=True)
+    logger.debug(f'Database Redis: {_database}')
     return _database
 
 

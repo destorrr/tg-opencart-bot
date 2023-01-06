@@ -306,6 +306,50 @@ def get_order_history(session, api_token, order_id, website):
     logger.debug(f'order_history: {json.loads(order_history)}')
 
 
+def get_order_content(order_id, user_db, psw, host, db):
+    """Получить содержимое заказа."""
+    cnx = mysql.connector.connect(user=user_db,
+                                  password=psw,
+                                  host=host,
+                                  database=db)
+    cursor = cnx.cursor()
+    query_order = ('SELECT telephone, total '
+                   f'FROM oc_order WHERE order_id = {order_id}')
+    query_order_product = ('SELECT name, quantity '
+                           'FROM oc_order_product '
+                           f'WHERE order_id = {order_id}')
+
+    cursor.execute(query_order)
+    order_dict = {}
+    for (telephone, total) in cursor:
+        order_dict['telephone'] = telephone
+        order_dict['total'] = total
+
+    cursor.close()
+
+    cursor = cnx.cursor()
+    cursor.execute(query_order_product)
+    order_products_list = []
+    for (name, quantity) in cursor:
+        product_dict = {}
+        product_dict['name'] = name
+        product_dict['quantity'] = quantity
+        order_products_list.append(product_dict)
+
+    cursor.close()
+
+    text = (f'Сообщение доставщику\n'
+            f'--------------------------\n'
+            f'Номер заказа: {order_id}\n')
+    for dish in order_products_list:
+        text += f'{dish["name"]} - {dish["quantity"]} шт.\n'
+
+    text += (f'Итоговая сумма заказа: {order_dict["total"]}\n'
+             f'Номер телефона клиента: {order_dict["telephone"]}')
+    logger.info(f'Текст сообщения доставщику: \n{text}')
+    return text
+
+
 def create_order(s, api_token, lastname, telephone, website):
     """Создать заказ."""
     # Установить адрес доставки.
