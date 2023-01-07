@@ -359,11 +359,11 @@ async def get_contacts(
             #                         website=WEBSITE)
             logger.debug(f'Номер телефона: {user_reply[0]}')
             logger.debug(f'User: {user}')
-            logger.debug(f'Username: {user["username"]}')
+            logger.debug(f'User_id: {user["id"]}')
             logger.debug(f'Chat_id: {chat_id}')
             db = get_database_connection()
-            db.set(user['username'], user_reply[0])
-            logger.debug(f'Номер телефона в Redis:{db.get(user["username"])}')
+            db.set(user['id'], user_reply[0])
+            logger.debug(f'Номер телефона в Redis:{db.get(user["id"])}')
             # text = (f'Заказ сохранен.\n'
             #         f'Номер заказа - {order_id}.\n'
             #         f'Как будет товар, мы вас оповестим.')
@@ -550,7 +550,7 @@ async def delivery_options(api_token,
         user = update.effective_user
         logger.debug(f'user_reply: {user_reply}')
         db = get_database_connection()
-        telephone = db.get(user['username'])
+        telephone = db.get(user['id'])
         logger.debug(f'Телефон из Redis: {telephone}')
 
         if user_reply[0] == 'pickup':
@@ -574,17 +574,28 @@ async def delivery_options(api_token,
             await delivery(order_id, deliveryman_id, coords,
                            OP_USER, OP_PASSWORD, OP_HOST, OP_DATABASE,
                            update, context)
+            # Запуск шедулера, для отправки сообщения 60 сек.
+            name = update.effective_chat.full_name
+            context.job_queue.run_once(callback_alarm, 60, name=str(chat_id),
+                                       data=name, chat_id=chat_id)
 
         text = (f'Номер заказа - {order_id}.\n'
                 f'Спасибо за заказ, ждем вас снова!')
 
         await context.bot.send_message(text=text, chat_id=chat_id)
+
         return await start(api_token, update, context)
     else:
         chat_id = update.message.chat_id
         text = f'Вводить ничего не надо. Выберите вариант доставки.'
         await context.bot.send_message(text=text, chat_id=chat_id)
         return 'DELIVERY_OPTIONS'
+
+
+async def callback_alarm(context: ContextTypes.DEFAULT_TYPE):
+    # Узнать, доставили ли заказ:
+    await context.bot.send_message(chat_id=context.job.chat_id,
+                                   text=f'Вам привезли пиццу?')
 
 
 async def delivery(order_id, deliveryman_id, coords,
