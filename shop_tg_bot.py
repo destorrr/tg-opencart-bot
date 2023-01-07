@@ -148,6 +148,7 @@ async def start(
             reply_markup=reply_markup,
         )
     elif update.callback_query:
+        logger.debug(f'callback_query.data: {update.callback_query.data}')
         chat_id = update.callback_query.message.chat_id
         message_id = update.callback_query.message.message_id
 
@@ -157,6 +158,7 @@ async def start(
                 or update.callback_query.data == 'back'
                 or update.callback_query.data.split(',')[-1] == '_true'
                 or update.callback_query.data.split(',')[0] == 'pickup'
+                or update.callback_query.data.split(';')[0] == 'pickup'
                 or update.callback_query.data.split(';')[0] == 'delivery'):
             await context.bot.delete_message(chat_id=chat_id,
                                              message_id=message_id)
@@ -542,6 +544,7 @@ async def delivery_options(api_token,
                            update: Update,
                            context: ContextTypes.DEFAULT_TYPE) -> None:
     if update.callback_query:
+        logger.debug(f'callback_query.data: {update.callback_query.data}')
         user_reply = update.callback_query.data.split(';')
         chat_id = update.callback_query.message.chat_id
         user = update.effective_user
