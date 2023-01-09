@@ -1,6 +1,7 @@
 import os
 
 import logging
+import json
 import phonenumbers
 import redis
 import requests
@@ -14,13 +15,15 @@ from telegram import (InlineKeyboardButton,
                       Update,
                       constants,
                       KeyboardButton,
+                      LabeledPrice,
                       ReplyKeyboardMarkup)
 from telegram.ext import (Application,
                           CommandHandler,
                           ContextTypes,
                           MessageHandler,
                           filters,
-                          CallbackQueryHandler)
+                          CallbackQueryHandler,
+                          PreCheckoutQueryHandler)
 
 load_dotenv()
 
@@ -42,6 +45,7 @@ API_USERNAME = os.getenv('OPENCART_API_USER_NAME')
 API_KEY = os.getenv('OPENCART_API_KEY')
 WEBSITE = os.getenv('WEBSITE_HOST')
 YA_GEO_API_KEY = os.getenv('YA_GEO_API_KEY')
+PAYMENT_PROVIDER_TOKEN = os.getenv('PAYMENT_PROVIDER_TOKEN')
 
 
 def fetch_coordinates(apikey, address):
@@ -352,6 +356,7 @@ async def get_contacts(
         chat_id = update.callback_query.message.chat_id
         user = update.effective_user
         user_reply = query.data.split(',')
+        logger.debug(f'user_reply: {user_reply}')
         if user_reply[-1] == '_true':
             # order_id = create_order(s, api_token,
             #                         telephone=user_reply[0],
@@ -362,8 +367,8 @@ async def get_contacts(
             logger.debug(f'User_id: {user["id"]}')
             logger.debug(f'Chat_id: {chat_id}')
             db = get_database_connection()
-            db.set(user['id'], user_reply[0])
-            logger.debug(f'Номер телефона в Redis:{db.get(user["id"])}')
+            db.set(user['id'] + 1, user_reply[0])
+            logger.debug(f'Номер телефона в Redis:{db.get(user["id"] + 1)}')
             # text = (f'Заказ сохранен.\n'
             #         f'Номер заказа - {order_id}.\n'
             #         f'Как будет товар, мы вас оповестим.')
@@ -413,6 +418,7 @@ async def get_contacts(
                 x, phonenumbers.PhoneNumberFormat.INTERNATIONAL)
             text = f'Ваш номер: <b>{number}</b>. Верно?'
 
+            logger.debug(f'user_reply: {user_reply}')
             keyboard = [
                 [InlineKeyboardButton('Верно',
                                       callback_data=f'{user_reply},_true')],
@@ -549,8 +555,10 @@ async def delivery_options(api_token,
         chat_id = update.callback_query.message.chat_id
         user = update.effective_user
         logger.debug(f'user_reply: {user_reply}')
+        logger.debug(f'user: {user}')
+        logger.debug(f'user id: {user["id"]}')
         db = get_database_connection()
-        telephone = db.get(user['id'])
+        telephone = db.get(user['id'] + 1)
         logger.debug(f'Телефон из Redis: {telephone}')
 
         if user_reply[0] == 'pickup':
@@ -576,20 +584,100 @@ async def delivery_options(api_token,
                            update, context)
             # Запуск шедулера, для отправки сообщения 60 сек.
             name = update.effective_chat.full_name
-            context.job_queue.run_once(callback_alarm, 60, name=str(chat_id),
-                                       data=name, chat_id=chat_id)
+            seconds = 60
+            context.job_queue.run_once(callback_alarm, seconds,
+                                       name=str(chat_id), data=name,
+                                       chat_id=chat_id)
 
         text = (f'Номер заказа - {order_id}.\n'
                 f'Спасибо за заказ, ждем вас снова!')
 
         await context.bot.send_message(text=text, chat_id=chat_id)
 
-        return await start(api_token, update, context)
+        text = f'Оплачиваем онлайн или на месте?'
+        keyboard = [
+            [InlineKeyboardButton('Оплата онлайн',
+                                  callback_data=f'online_payment;{order_id}')],
+            [InlineKeyboardButton('Оплата на месте',
+                                  callback_data=f'payment_after_delivery')],
+        ]
+
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
+        await context.bot.send_message(text=text,
+                                       chat_id=chat_id,
+                                       reply_markup=reply_markup,
+                                       parse_mode=constants.ParseMode.HTML)
+
+        return 'PAYMENT'
+        # return await start(api_token, update, context)
     else:
         chat_id = update.message.chat_id
         text = f'Вводить ничего не надо. Выберите вариант доставки.'
         await context.bot.send_message(text=text, chat_id=chat_id)
         return 'DELIVERY_OPTIONS'
+
+
+async def payment(api_token,
+                  update: Update,
+                  context: ContextTypes.DEFAULT_TYPE) -> None:
+    logger.debug(f'Входим в payment')
+    user_reply = update.callback_query.data.split(';')
+    logger.debug(f'update: {update}')
+    chat_id = update.callback_query.message.chat_id
+    logger.debug(f'chat_id: {chat_id}')
+    logger.debug(f'user_reply: {user_reply}')
+    if user_reply[0] == 'online_payment':
+        order_id = user_reply[1]
+        order_info = get_order_info(s, api_token, order_id, website=WEBSITE)
+        logger.debug(f'Alarm after order_info!!!')
+        total = int(float(json.loads(order_info)['order']['total']))
+        logger.debug(f'total: {total}')
+        logger.debug(f'type of total: {type(total)}')
+        title = "Оплата заказа"
+        description = "Общая сумма вашего заказа"
+        payload = "Custom-Payload"
+        currency = "RUB"
+        # price = 100
+        prices = [LabeledPrice("Test", total * 100)]
+
+        logger.debug(f'Prices: {prices}')
+
+        await context.bot.send_invoice(chat_id=chat_id,
+                                       title=title,
+                                       description=description,
+                                       payload=payload,
+                                       provider_token=PAYMENT_PROVIDER_TOKEN,
+                                       currency=currency,
+                                       prices=prices)
+    else:
+        text = (f'Спасибо за заказ!\n\n'
+                f'Для продолжения покупок отправьте любое сообщение '
+                f'или /start.')
+        await context.bot.send_message(text=text, chat_id=chat_id)
+    logger.debug(f'Alarm!!!')
+    return 'START'
+
+
+async def precheckout_callback(update: Update,
+                               context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Answers the PreQecheckoutQuery"""
+    query = update.pre_checkout_query
+    # check the payload, is this from your bot?
+    if query.invoice_payload != "Custom-Payload":
+        # answer False pre_checkout_query
+        await query.answer(ok=False, error_message="Something went wrong...")
+    else:
+        await query.answer(ok=True)
+
+
+async def successful_payment_callback(update: Update,
+                                      context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Подтверждение успешного платежа."""
+    await update.message.reply_text(
+        f"Спасибо вам за ваш платеж!\n\n"
+        f'Для продолжения покупок отправьте любое сообщение или /start.'
+    )
 
 
 async def callback_alarm(context: ContextTypes.DEFAULT_TYPE):
@@ -708,6 +796,7 @@ async def handle_users_reply(
         'WAITING_CONTACTS': get_contacts,
         'LOCATION': handle_location,
         'DELIVERY_OPTIONS': delivery_options,
+        'PAYMENT': payment,
     }
     state_handler = states_functions[user_state]
 
@@ -751,6 +840,15 @@ def main() -> None:
         CommandHandler("start", handle_users_reply))
     application.add_handler(
         CallbackQueryHandler(handle_users_reply))
+
+    # Pre-checkout handler to final check
+    application.add_handler(PreCheckoutQueryHandler(precheckout_callback))
+
+    # Success! Notify your user!
+    application.add_handler(
+        MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_callback)
+    )
+
     application.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND,
                        handle_users_reply))
