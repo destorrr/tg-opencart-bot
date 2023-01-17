@@ -35,6 +35,7 @@ logger = logging.getLogger('tg_bot')
 logger.setLevel(logging.DEBUG)
 
 s = requests.Session()
+sessions = {}
 
 _database = None
 OP_USER = os.getenv("OPENCART_DB_USER")
@@ -67,32 +68,6 @@ def fetch_coordinates(apikey, address):
     lon, lat = most_relevant['GeoObject']['Point']['pos'].split(" ")
 
     return lat, lon
-
-
-def get_access_to_opencart(db) -> str:
-    """Получает токен для текущей сессии из БД Redis."""
-    # Первое обращение в БД за токеном.
-    api_token = db.get('api_token')
-    if api_token is None:
-        api_token = get_api_token(s, API_USERNAME, API_KEY, WEBSITE)
-        db.set('api_token', api_token)
-        logger.info('Генерация токена, так как его нет в БД.')
-        return api_token
-    # Если токен есть в базе, то делаем любой тестовый запрос с использованием
-    # токена. Если 'error' - генерируем новый и записываем в БД.
-    # check_api = get_shipping_methods(s, api_token, WEBSITE)
-    try:
-        check_api = get_cart_products(s, api_token, WEBSITE)
-    except requests.exceptions.HTTPError as err:
-        logger.error(f'HTTPError from OpenCart: {err}')
-    if 'error' in check_api:
-        api_token = get_api_token(s, API_USERNAME, API_KEY, WEBSITE)
-        db.set('api_token', api_token)
-        logger.info('Генерация токена, так как старый токен не валиден.')
-        return api_token
-    else:
-        logger.info('Используется текущий токен.')
-        return api_token
 
 
 def get_keyboard_menu(products: list, count_lines_on_page, page_num=1):
@@ -455,13 +430,14 @@ async def handle_location(
             min_distance = min(distances, key=get_distance)
             store_name = min_distance['name']
             logger.debug(f'Магазин (яндекс координаты): {store_name}')
-            deliveryman_id = get_deliveryman_id(store_name,OP_USER, OP_PASSWORD,
+            deliveryman_id = get_deliveryman_id(store_name,
+                                                OP_USER, OP_PASSWORD,
                                                 OP_HOST, OP_DATABASE)
             await update.message.reply_text(text=get_shipping(min_distance))
 
             text = f'Делаем доставку или самовывоз?'
             keyboard = [
-                [InlineKeyboardButton('Доставка', 
+                [InlineKeyboardButton('Доставка',
                                       callback_data=f'delivery;{deliveryman_id};{current_pos}')],
                 [InlineKeyboardButton('Самовывоз', callback_data=f'pickup;{store_name}')],
             ]
@@ -766,10 +742,6 @@ async def handle_users_reply(
         update: Update,
         context: ContextTypes.DEFAULT_TYPE) -> None:
     db = get_database_connection()
-    try:
-        api_token = get_access_to_opencart(db)
-    except Exception as err:
-        logger.error(f'Ошибка получения токена OpenCart: {err}')
     if update.message:
         user_reply = update.message.text
         chat_id = update.message.chat_id
@@ -778,6 +750,10 @@ async def handle_users_reply(
         chat_id = update.callback_query.message.chat_id
     else:
         return
+    try:
+        api_token = get_session(chat_id, s)
+    except Exception as err:
+        logger.error(f'Ошибка получения токена OpenCart: {err}')
     if user_reply == '/start':
         user_state = 'START'
     # Если category_id=None, то получим список всех товаров.
@@ -806,6 +782,16 @@ async def handle_users_reply(
         db.set(chat_id, next_state)
     except Exception as err:
         logger.error(f'Ошибка - {err}')
+
+
+def get_session(chat_id, s):
+    # Проверить, существует ли сессия для этого пользователя.
+    if chat_id not in sessions:
+        sessions[chat_id] = get_api_token(s,
+                                          username=API_USERNAME,
+                                          key=API_KEY,
+                                          website=WEBSITE)
+    return sessions[chat_id]
 
 
 def get_database_connection():
